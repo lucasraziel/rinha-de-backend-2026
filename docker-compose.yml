@@ -1,13 +1,13 @@
 ## Rinha 2026 — submission
 ## total budget: 1.0 CPU + 350 MB RAM
-## image: lucasraziel/rinha2026-api:5751d70be02000c269ba09ee23e7a19ca065f3b6
+## image: lucasraziel/rinha2026-api:2a7203bb0c93df53e9e99e5cfe56ea5a4d85f176
 
 services:
   api1:
-    image: lucasraziel/rinha2026-api:5751d70be02000c269ba09ee23e7a19ca065f3b6
+    image: lucasraziel/rinha2026-api:2a7203bb0c93df53e9e99e5cfe56ea5a4d85f176
     environment:
       PORT: "9000"
-      NPROBE: "12"
+      NPROBE: "16"
     networks:
       - rinha
     deploy:
@@ -17,10 +17,10 @@ services:
           memory: "160M"
 
   api2:
-    image: lucasraziel/rinha2026-api:5751d70be02000c269ba09ee23e7a19ca065f3b6
+    image: lucasraziel/rinha2026-api:2a7203bb0c93df53e9e99e5cfe56ea5a4d85f176
     environment:
       PORT: "9000"
-      NPROBE: "12"
+      NPROBE: "16"
     networks:
       - rinha
     deploy:
