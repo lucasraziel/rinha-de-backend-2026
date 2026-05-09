@@ -2,15 +2,15 @@
 # Creates / refreshes the orphan `submission` branch with only the files the
 # Rinha evaluator needs:
 #   docker-compose.yml — pinned to the immutable image tag
-#   nginx.conf
+#   docker/nginx.conf
 #   info.json
 #   LICENSE
 #
+# Uses `git worktree` so the main working tree is left alone. Run from any
+# branch you like.
+#
 # Usage:
 #   ./scripts/make-submission.sh <git-sha-of-image>
-#
-# The <git-sha> must match an image already pushed to Docker Hub by the
-# release workflow (lucasraziel/rinha2026-api:<sha>).
 set -euo pipefail
 
 SHA="${1:?usage: $0 <git-sha-of-image>}"
@@ -19,30 +19,34 @@ IMAGE="lucasraziel/rinha2026-api:${SHA}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-# verify the image exists on Docker Hub before going through the trouble
-echo "→ checking ${IMAGE} exists on Docker Hub"
-TOKEN=$(curl -fsS "https://auth.docker.io/token?service=registry.docker.io&scope=repository:lucasraziel/rinha2026-api:pull" | jq -r .token)
-if ! curl -fsS -o /dev/null -w '%{http_code}' \
-     -H "Authorization: Bearer ${TOKEN}" \
-     -H 'Accept: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.v2+json,application/vnd.docker.distribution.manifest.list.v2+json' \
-     "https://registry-1.docker.io/v2/lucasraziel/rinha2026-api/manifests/${SHA}" \
-     | grep -q '^200$'; then
-    echo "❌ image not found: ${IMAGE}"
-    echo "   wait for the release workflow to finish, or push manually"
-    exit 1
+WT_DIR="$(mktemp -d -t rinha-submission-XXXXXX)"
+echo "→ creating worktree at ${WT_DIR}"
+
+# does the submission branch already exist locally?
+if git show-ref --verify --quiet refs/heads/submission; then
+    git worktree add "${WT_DIR}" submission
+    pushd "${WT_DIR}" >/dev/null
+    # wipe everything tracked so we start from a clean tree
+    git rm -rf . >/dev/null 2>&1 || true
+    git clean -fdx
+    popd >/dev/null
+else
+    # create new orphan branch in the worktree
+    git worktree add --detach "${WT_DIR}"
+    pushd "${WT_DIR}" >/dev/null
+    git checkout --orphan submission
+    git rm -rf . >/dev/null 2>&1 || true
+    git clean -fdx
+    popd >/dev/null
 fi
-echo "  ✓ image exists"
 
-# stage submission files in a temp dir
-TMP=$(mktemp -d)
-trap "rm -rf ${TMP}" EXIT
-
-cp LICENSE info.json "${TMP}/"
-mkdir -p "${TMP}/docker"
-cp docker/nginx.conf "${TMP}/docker/"
+# stage submission files
+mkdir -p "${WT_DIR}/docker"
+cp LICENSE info.json "${WT_DIR}/"
+cp docker/nginx.conf "${WT_DIR}/docker/"
 
 # render docker-compose with the pinned image
-cat > "${TMP}/docker-compose.yml" <<EOF
+cat > "${WT_DIR}/docker-compose.yml" <<EOF
 ## Rinha 2026 — submission
 ## total budget: 1.0 CPU + 350 MB RAM
 ## image: ${IMAGE}
@@ -98,28 +102,30 @@ networks:
     driver: bridge
 EOF
 
+pushd "${WT_DIR}" >/dev/null
+echo
 echo "→ submission tree:"
-(cd "${TMP}" && find . -type f | sort)
-
-# create / reset the submission branch from the staged tree
-echo "→ creating orphan submission branch"
-git switch --orphan submission 2>/dev/null || git switch submission
-git rm -rf . >/dev/null 2>&1 || true
-git clean -fdx
-cp -R "${TMP}/." .
-
+find . -maxdepth 2 -type f -not -path './.git/*' | sort
+echo
 git add -A
 git status -s
 
 cat <<EOF
 
-→ Now (manually, since GPG signing needs a TTY):
+→ Worktree at:
+    ${WT_DIR}
+
+→ Now (manually, GPG signing needs a TTY):
+    cd ${WT_DIR}
     git commit -m "submission: pin image to ${SHA:0:7}"
     git push -u origin submission
+    cd -
+    git worktree remove ${WT_DIR}
 
-Then on the Rinha repo (https://github.com/zanfranceschi/rinha-de-backend-2026):
+Then on the official Rinha repo (https://github.com/zanfranceschi/rinha-de-backend-2026):
   1. Fork it.
-  2. Add participants/lucasraziel.json with:
-        [{"id": "rinha2026-api", "repo": "https://github.com/lucasraziel/rinha-de-backend-2026"}]
-  3. Open a PR.
+  2. Add participants/lucasraziel.json:
 EOF
+cat "${ROOT}/participants-snippet/lucasraziel.json"
+echo "  3. Open a PR."
+popd >/dev/null
