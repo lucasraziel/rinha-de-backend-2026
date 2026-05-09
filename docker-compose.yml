@@ -9,6 +9,11 @@ services:
     image: lucasraziel/rinha2026-api:dev
     environment:
       PORT: "9000"
+      # nprobe = how many of the 1024 IVF clusters we scan per query.
+      # Higher = better recall (less FP/FN) at the cost of latency. With
+      # p99 ~0.76 ms at nprobe=16 we have plenty of headroom up to 1 ms
+      # (the score_p99 saturation point).
+      NPROBE: "32"
     networks:
       - rinha
     deploy:
@@ -21,6 +26,7 @@ services:
     image: lucasraziel/rinha2026-api:dev
     environment:
       PORT: "9000"
+      NPROBE: "32"
     networks:
       - rinha
     deploy:
