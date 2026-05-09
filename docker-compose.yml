@@ -7,7 +7,7 @@ services:
     image: lucasraziel/rinha2026-api:5751d70be02000c269ba09ee23e7a19ca065f3b6
     environment:
       PORT: "9000"
-      NPROBE: "16"
+      NPROBE: "12"
     networks:
       - rinha
     deploy:
@@ -20,7 +20,7 @@ services:
     image: lucasraziel/rinha2026-api:5751d70be02000c269ba09ee23e7a19ca065f3b6
     environment:
       PORT: "9000"
-      NPROBE: "16"
+      NPROBE: "12"
     networks:
       - rinha
     deploy:
