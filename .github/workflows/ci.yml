@@ -1,0 +1,66 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: cargo test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo test
+        run: cargo test --workspace --release
+
+  build-image:
+    name: build linux/amd64 image
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: fetch references.json.gz
+        run: ./scripts/fetch-resources.sh
+
+      - name: generate references.bin
+        run: cargo run --release -p prep -- --dtype f16
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: build api image
+        run: |
+          docker buildx build \
+            --platform linux/amd64 \
+            -f docker/Dockerfile \
+            -t rinha2026-api:ci \
+            --load \
+            .
+
+      - name: smoke test
+        run: |
+          docker network create rinha-ci || true
+          docker run -d --network rinha-ci --name api1 -e PORT=9000 rinha2026-api:ci
+          docker run -d --network rinha-ci --name api2 -e PORT=9000 rinha2026-api:ci
+          docker run -d --network rinha-ci -p 9999:9999 \
+            -v "$PWD/docker/nginx.conf:/etc/nginx/nginx.conf:ro" \
+            --name nginx nginx:1.27-alpine
+          sleep 6
+          curl -fsS http://localhost:9999/ready
+          echo
+          curl -fsS -X POST http://localhost:9999/fraud-score \
+            -H 'content-type: application/json' \
+            -d '{"id":"tx-1329056812","transaction":{"amount":41.12,"installments":2,"requested_at":"2026-03-11T18:45:53Z"},"customer":{"avg_amount":82.24,"tx_count_24h":3,"known_merchants":["MERC-003","MERC-016"]},"merchant":{"id":"MERC-016","mcc":"5411","avg_amount":60.25},"terminal":{"is_online":false,"card_present":true,"km_from_home":29.23},"last_transaction":null}'
+          echo
+          curl -fsS -X POST http://localhost:9999/fraud-score \
+            -H 'content-type: application/json' \
+            -d '{"id":"tx-3330991687","transaction":{"amount":9505.97,"installments":10,"requested_at":"2026-03-14T05:15:12Z"},"customer":{"avg_amount":81.28,"tx_count_24h":20,"known_merchants":["MERC-008","MERC-007","MERC-005"]},"merchant":{"id":"MERC-068","mcc":"7802","avg_amount":54.86},"terminal":{"is_online":false,"card_present":true,"km_from_home":952.27},"last_transaction":null}'
+          echo
+          docker logs api1
+          docker logs nginx

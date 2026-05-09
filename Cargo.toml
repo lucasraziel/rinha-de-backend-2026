@@ -1,0 +1,17 @@
+[workspace]
+resolver = "2"
+members = ["crates/api", "crates/prep"]
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/lucasraziel/rinha-de-backend-2026"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
+debug = false
+incremental = false

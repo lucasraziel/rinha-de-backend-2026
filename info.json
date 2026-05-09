@@ -1,0 +1,14 @@
+{
+  "nome": "Lucas Rego",
+  "social": [
+    "https://github.com/lucasraziel"
+  ],
+  "fonte": "https://github.com/lucasraziel/rinha-de-backend-2026",
+  "tecnologias": [
+    "Rust",
+    "Hyper",
+    "SIMD AVX2",
+    "KNN brute-force / IVF",
+    "Nginx"
+  ]
+}

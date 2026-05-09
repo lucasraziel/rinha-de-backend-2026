@@ -1,0 +1,61 @@
+name: bench
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  k6:
+    name: k6 load test (linux/amd64 native)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: fetch references.json.gz
+        run: ./scripts/fetch-resources.sh
+
+      - name: generate references.bin (f16)
+        run: cargo run --release -p prep -- --dtype f16
+
+      - name: install k6
+        run: |
+          sudo gpg -k
+          sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg \
+            --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" \
+            | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install -y k6
+
+      - name: docker compose up
+        run: |
+          docker compose up -d --build
+          for i in {1..30}; do
+            curl -fsS http://localhost:9999/ready && break || sleep 1
+          done
+
+      - name: download official test data
+        run: |
+          mkdir -p test
+          curl -fsSL -o test/test-data.json \
+            https://raw.githubusercontent.com/zanfranceschi/rinha-de-backend-2026/main/test/test-data.json
+
+      - name: run k6
+        run: |
+          mkdir -p test
+          k6 run bench/test.js
+          cat test/results.json
+
+      - name: upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: results
+          path: test/results.json
+
+      - name: docker logs on failure
+        if: failure()
+        run: docker compose logs --tail=200

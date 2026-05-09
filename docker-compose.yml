@@ -1,0 +1,53 @@
+## Rinha 2026 — total budget across all services: 1.0 CPU + 350 MB RAM.
+## Split: nginx 0.10 / 25 MB; api1 0.45 / 160 MB; api2 0.45 / 160 MB.
+
+services:
+  api1:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: lucasraziel/rinha2026-api:dev
+    environment:
+      PORT: "9000"
+    networks:
+      - rinha
+    deploy:
+      resources:
+        limits:
+          cpus: "0.45"
+          memory: "160M"
+
+  api2:
+    image: lucasraziel/rinha2026-api:dev
+    environment:
+      PORT: "9000"
+    networks:
+      - rinha
+    deploy:
+      resources:
+        limits:
+          cpus: "0.45"
+          memory: "160M"
+    depends_on:
+      - api1
+
+  nginx:
+    image: nginx:1.27-alpine
+    volumes:
+      - ./docker/nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "9999:9999"
+    networks:
+      - rinha
+    depends_on:
+      - api1
+      - api2
+    deploy:
+      resources:
+        limits:
+          cpus: "0.10"
+          memory: "25M"
+
+networks:
+  rinha:
+    driver: bridge
