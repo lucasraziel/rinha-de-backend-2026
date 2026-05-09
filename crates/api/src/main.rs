@@ -1,5 +1,6 @@
 use std::convert::Infallible;
 use std::net::SocketAddr;
+use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
@@ -10,7 +11,7 @@ use hyper::service::service_fn;
 use hyper::{Method, Request, Response, StatusCode};
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto::Builder as ConnBuilder;
-use tokio::net::TcpListener;
+use tokio::net::{TcpListener, UnixListener};
 
 mod consts;
 mod dataset;
@@ -118,18 +119,38 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let leaked: &'static Dataset = Box::leak(Box::new(dataset));
     let _ = DATASET.set(leaked);
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], port));
-    let listener = TcpListener::bind(addr).await?;
-    eprintln!("api listening on {addr}");
-
-    loop {
-        let (stream, _) = listener.accept().await?;
-        let _ = stream.set_nodelay(true);
-        let io = TokioIo::new(stream);
-        tokio::spawn(async move {
-            let _ = ConnBuilder::new(TokioExecutor::new())
-                .serve_connection(io, service_fn(handle))
-                .await;
-        });
+    // If SOCKET_PATH is set, listen on a Unix domain socket (eliminates the
+    // TCP loopback round trip between nginx and the api). Otherwise listen
+    // on TCP. nginx's `proxy_pass http://api;` works against either.
+    if let Ok(socket_path) = std::env::var("SOCKET_PATH") {
+        let path = PathBuf::from(&socket_path);
+        let _ = std::fs::remove_file(&path);
+        let listener = UnixListener::bind(&path)?;
+        // 0666 so the nginx user (different uid) can connect.
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o666))?;
+        eprintln!("api listening on UDS {}", path.display());
+        loop {
+            let (stream, _) = listener.accept().await?;
+            let io = TokioIo::new(stream);
+            tokio::spawn(async move {
+                let _ = ConnBuilder::new(TokioExecutor::new())
+                    .serve_connection(io, service_fn(handle))
+                    .await;
+            });
+        }
+    } else {
+        let addr = SocketAddr::from(([0, 0, 0, 0], port));
+        let listener = TcpListener::bind(addr).await?;
+        eprintln!("api listening on {addr}");
+        loop {
+            let (stream, _) = listener.accept().await?;
+            let _ = stream.set_nodelay(true);
+            let io = TokioIo::new(stream);
+            tokio::spawn(async move {
+                let _ = ConnBuilder::new(TokioExecutor::new())
+                    .serve_connection(io, service_fn(handle))
+                    .await;
+            });
+        }
     }
 }

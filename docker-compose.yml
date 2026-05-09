@@ -1,5 +1,8 @@
 ## Rinha 2026 — total budget across all services: 1.0 CPU + 350 MB RAM.
 ## Split: nginx 0.10 / 25 MB; api1 0.45 / 160 MB; api2 0.45 / 160 MB.
+##
+## T4: nginx ↔ api over Unix domain sockets via the `uds` shared volume.
+## Eliminates loopback TCP round-trip on every request.
 
 services:
   api1:
@@ -8,14 +11,11 @@ services:
       dockerfile: docker/Dockerfile
     image: lucasraziel/rinha2026-api:dev
     environment:
-      PORT: "9000"
+      SOCKET_PATH: "/run/uds/api1.sock"
       NPROBE: "16"
-      # T3: bypass IVF, faz brute-force exato (linear scan dos 91 MB f16)
-      # com SIMD AVX2/F16C. Em hardware com cache pequeno (Haswell L3 = 3MB)
-      # e DDR3, o linear scan tira proveito do prefetcher e tende a ser tão
-      # ou mais rápido que IVF (random jumps entre 1024 clusters → cache miss).
-      # Bonus: detection 100% exata (0 FP/FN/Err esperado).
-      USE_IVF: "false"
+      USE_IVF: "true"
+    volumes:
+      - uds:/run/uds
     networks:
       - rinha
     deploy:
@@ -27,9 +27,11 @@ services:
   api2:
     image: lucasraziel/rinha2026-api:dev
     environment:
-      PORT: "9000"
+      SOCKET_PATH: "/run/uds/api2.sock"
       NPROBE: "16"
-      USE_IVF: "false"
+      USE_IVF: "true"
+    volumes:
+      - uds:/run/uds
     networks:
       - rinha
     deploy:
@@ -44,6 +46,7 @@ services:
     image: nginx:1.27-alpine
     volumes:
       - ./docker/nginx.conf:/etc/nginx/nginx.conf:ro
+      - uds:/run/uds
     ports:
       - "9999:9999"
     networks:
@@ -56,6 +59,9 @@ services:
         limits:
           cpus: "0.10"
           memory: "25M"
+
+volumes:
+  uds:
 
 networks:
   rinha:

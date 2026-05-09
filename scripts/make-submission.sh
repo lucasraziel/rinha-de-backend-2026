@@ -50,14 +50,17 @@ cat > "${WT_DIR}/docker-compose.yml" <<EOF
 ## Rinha 2026 — submission
 ## total budget: 1.0 CPU + 350 MB RAM
 ## image: ${IMAGE}
+## Topology: nginx ↔ api1/api2 over Unix domain sockets (shared volume \`uds\`).
 
 services:
   api1:
     image: ${IMAGE}
     environment:
-      PORT: "9000"
+      SOCKET_PATH: "/run/uds/api1.sock"
       NPROBE: "16"
-      USE_IVF: "false"
+      USE_IVF: "true"
+    volumes:
+      - uds:/run/uds
     networks:
       - rinha
     deploy:
@@ -69,9 +72,11 @@ services:
   api2:
     image: ${IMAGE}
     environment:
-      PORT: "9000"
+      SOCKET_PATH: "/run/uds/api2.sock"
       NPROBE: "16"
-      USE_IVF: "false"
+      USE_IVF: "true"
+    volumes:
+      - uds:/run/uds
     networks:
       - rinha
     deploy:
@@ -86,6 +91,7 @@ services:
     image: nginx:1.27-alpine
     volumes:
       - ./docker/nginx.conf:/etc/nginx/nginx.conf:ro
+      - uds:/run/uds
     ports:
       - "9999:9999"
     networks:
@@ -98,6 +104,9 @@ services:
         limits:
           cpus: "0.10"
           memory: "25M"
+
+volumes:
+  uds:
 
 networks:
   rinha:

@@ -26,8 +26,11 @@ COPY resources ./resources
 RUN cargo build --release --bin api -p api \
     && strip target/release/api
 
-FROM --platform=linux/amd64 gcr.io/distroless/cc-debian12:nonroot
-WORKDIR /
+# distroless cc-debian12 (root, not nonroot) — needed so the api can bind
+# its UDS socket inside the volume mounted at /run/uds without the volume
+# being pre-chowned. We `chmod 0666` the socket after bind so nginx can talk
+# to us regardless of its own uid.
+FROM --platform=linux/amd64 gcr.io/distroless/cc-debian12
 COPY --from=builder /build/target/release/api /api
 COPY data/references.bin /data/references.bin
 ENV DATASET_PATH=/data/references.bin
