@@ -1,0 +1,7 @@
+{
+    "participants": ["Lucas Rego"],
+    "social": ["https://github.com/lucasraziel"],
+    "source-code-repo": "https://github.com/lucasraziel/rinha-de-backend-2026",
+    "stack": ["rust", "hyper", "nginx", "ivf-knn", "simd-avx2-f16c"],
+    "open_to_work": false
+}
