@@ -57,6 +57,7 @@ services:
     environment:
       PORT: "9000"
       NPROBE: "16"
+      USE_IVF: "false"
     networks:
       - rinha
     deploy:
@@ -70,6 +71,7 @@ services:
     environment:
       PORT: "9000"
       NPROBE: "16"
+      USE_IVF: "false"
     networks:
       - rinha
     deploy:

@@ -22,6 +22,7 @@ use dataset::Dataset;
 
 static DATASET: OnceLock<&'static Dataset> = OnceLock::new();
 static NPROBE: OnceLock<usize> = OnceLock::new();
+static USE_IVF: OnceLock<bool> = OnceLock::new();
 
 const READY_BODY: &[u8] = b"";
 const BAD_REQUEST_BODY: &[u8] = br#"{"error":"bad_request"}"#;
@@ -47,7 +48,8 @@ async fn handle(req: Request<Incoming>) -> Result<Response<Full<Bytes>>, Infalli
                 None => return Ok(internal_error()),
             };
             let nprobe = *NPROBE.get().unwrap_or(&16);
-            let frauds = knn::fraud_count_in_top_k(&q, dataset, nprobe);
+            let use_ivf = *USE_IVF.get().unwrap_or(&true);
+            let frauds = knn::fraud_count_in_top_k(&q, dataset, nprobe, use_ivf);
             let body = responses::response(frauds);
             Ok(ok(body, true))
         }
@@ -92,11 +94,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .into();
     let nprobe: usize = std::env::var("NPROBE").ok().and_then(|v| v.parse().ok()).unwrap_or(16);
     let _ = NPROBE.set(nprobe);
+    let use_ivf: bool = std::env::var("USE_IVF")
+        .ok()
+        .map(|v| matches!(v.to_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+        .unwrap_or(true);
+    let _ = USE_IVF.set(use_ivf);
 
     eprintln!("opening dataset at {}", dataset_path.display());
     let dataset = Dataset::open(&dataset_path)?;
     eprintln!(
-        "dataset: count={} stride={} dtype={} version={} nlist={} flags={:#x} nprobe={}",
+        "dataset: count={} stride={} dtype={} version={} nlist={} flags={:#x} nprobe={} use_ivf={}",
         dataset.count(),
         dataset.stride(),
         dataset.header.dtype,
@@ -104,6 +111,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         dataset.header.nlist,
         dataset.header.flags,
         nprobe,
+        use_ivf,
     );
     let warm = dataset.warm_up();
     eprintln!("warm-up checksum: {warm}");

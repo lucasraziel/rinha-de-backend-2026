@@ -9,12 +9,13 @@ services:
     image: lucasraziel/rinha2026-api:dev
     environment:
       PORT: "9000"
-      # nprobe = how many of the 1024 IVF clusters we scan per query.
-      # Sweet spot validated by CI bench: nprobe=16 → p99 0.76ms, score 5687.
-      # Tried nprobe=32: p99 collapsed to 30ms under 900 RPS due to scheduler
-      # backpressure even though throughput should have been fine — the win
-      # in detection (4 vs 6 FP/FN) didn't offset the score_p99 loss.
       NPROBE: "16"
+      # T3: bypass IVF, faz brute-force exato (linear scan dos 91 MB f16)
+      # com SIMD AVX2/F16C. Em hardware com cache pequeno (Haswell L3 = 3MB)
+      # e DDR3, o linear scan tira proveito do prefetcher e tende a ser tão
+      # ou mais rápido que IVF (random jumps entre 1024 clusters → cache miss).
+      # Bonus: detection 100% exata (0 FP/FN/Err esperado).
+      USE_IVF: "false"
     networks:
       - rinha
     deploy:
@@ -28,6 +29,7 @@ services:
     environment:
       PORT: "9000"
       NPROBE: "16"
+      USE_IVF: "false"
     networks:
       - rinha
     deploy:

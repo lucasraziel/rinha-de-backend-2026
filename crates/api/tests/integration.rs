@@ -25,7 +25,11 @@ fn run_query(body: &[u8]) -> u8 {
     let ds = dataset::Dataset::open(&dataset_path()).expect("open dataset");
     let _ = ds.warm_up();
     let nprobe = std::env::var("NPROBE").ok().and_then(|v| v.parse().ok()).unwrap_or(64);
-    knn::fraud_count_in_top_k(&q, &ds, nprobe)
+    let use_ivf = std::env::var("USE_IVF")
+        .ok()
+        .map(|v| matches!(v.to_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+        .unwrap_or(true);
+    knn::fraud_count_in_top_k(&q, &ds, nprobe, use_ivf)
 }
 
 #[test]

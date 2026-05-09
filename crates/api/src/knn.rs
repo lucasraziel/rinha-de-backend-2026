@@ -39,8 +39,13 @@ impl<const N: usize> TopK<N> {
 }
 
 #[inline]
-pub fn fraud_count_in_top_k(query: &[f32; STRIDE], dataset: &Dataset, nprobe: usize) -> u8 {
-    let top: TopK<K> = match (&dataset.ivf, &dataset.vectors) {
+pub fn fraud_count_in_top_k(
+    query: &[f32; STRIDE],
+    dataset: &Dataset,
+    nprobe: usize,
+    use_ivf: bool,
+) -> u8 {
+    let top: TopK<K> = match (use_ivf.then_some(()).and(dataset.ivf.as_ref()), &dataset.vectors) {
         (Some(ivf), VectorStore::F16(refs)) => search_ivf_f16(query, refs, ivf, nprobe),
         (Some(ivf), VectorStore::F32(refs)) => search_ivf_f32(query, refs, ivf, nprobe),
         (None, VectorStore::F16(refs)) => search_brute_f16(query, refs, dataset.count()),
