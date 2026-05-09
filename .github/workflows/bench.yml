@@ -39,13 +39,14 @@ jobs:
 
       - name: download official test data
         run: |
-          mkdir -p test
-          curl -fsSL -o test/test-data.json \
+          # k6 resolves open() relative to the script file (bench/), but the
+          # script writes results to test/results.json relative to the CWD.
+          curl -fsSL -o bench/test-data.json \
             https://raw.githubusercontent.com/zanfranceschi/rinha-de-backend-2026/main/test/test-data.json
+          mkdir -p test
 
       - name: run k6
         run: |
-          mkdir -p test
           k6 run bench/test.js
           cat test/results.json
 

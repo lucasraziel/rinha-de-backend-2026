@@ -1,19 +1,21 @@
 // Memory-mapped reference dataset.
 //
 //     ┌──────────── header (32 B) ─────────────┐
-//     │ magic[4]="R26V"  version(u32)=1       │
+//     │ magic[4]="R26V"  version(u32)=2       │
 //     │ count(u32)       dims(u32)=14         │
 //     │ stride(u32)=16   dtype(u32) (1=f16)   │
-//     │ reserved[8]                           │
+//     │ nlist(u32)       flags(u32)           │
 //     ├───────────────────────────────────────┤
-//     │ vectors:  count × stride × sizeof(d)  │
+//     │ vectors:  count × stride × sizeof(d)  │  ← reordered by cluster (IVF)
 //     ├───────────────────────────────────────┤
-//     │ labels:   ceil(count / 8) bytes       │
+//     │ labels:   ceil(count / 8) bytes       │  ← reordered to match
+//     ├───────────────────────────────────────┤
+//     │ centroids (if FLAG_IVF):              │
+//     │     nlist × stride × sizeof(d)        │
+//     ├───────────────────────────────────────┤
+//     │ offsets   (if FLAG_IVF):              │
+//     │     (nlist + 1) × u32                 │
 //     └───────────────────────────────────────┘
-//
-// The api crate only ever reads f16-encoded datasets in production; the f32
-// path is kept around for debugging and as a fallback if f16 introduces
-// detection regressions.
 
 use std::fs::File;
 use std::io;
@@ -21,11 +23,13 @@ use std::os::unix::io::AsRawFd;
 use std::path::Path;
 
 pub const MAGIC: &[u8; 4] = b"R26V";
-pub const VERSION: u32 = 1;
+pub const VERSION_V1: u32 = 1;
+pub const VERSION_V2: u32 = 2;
 pub const DIMS: usize = 14;
 pub const STRIDE: usize = 16;
 pub const DTYPE_F16: u32 = 1;
 pub const DTYPE_F32: u32 = 2;
+pub const FLAG_IVF: u32 = 1;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
@@ -36,15 +40,14 @@ pub struct Header {
     pub dims: u32,
     pub stride: u32,
     pub dtype: u32,
-    pub reserved: [u8; 8],
+    pub nlist: u32,
+    pub flags: u32,
 }
 
 const _: () = assert!(std::mem::size_of::<Header>() == 32);
 
 pub enum VectorStore {
-    /// raw f16 bits, count × STRIDE u16
     F16(&'static [u16]),
-    /// f32, count × STRIDE
     F32(&'static [f32]),
 }
 
@@ -52,6 +55,15 @@ pub struct Dataset {
     pub header: Header,
     pub vectors: VectorStore,
     pub labels: &'static [u8],
+    pub ivf: Option<IvfIndex>,
+}
+
+/// Centroids decoded into f32 (small — at most 1024 × 16 × 4 = 64 KB) so the
+/// stage-1 hot loop doesn't pay for f16→f32 conversions on every query.
+pub struct IvfIndex {
+    pub nlist: usize,
+    pub centroids_f32: Vec<f32>,
+    pub offsets: &'static [u32],
 }
 
 struct Mmap {
@@ -88,7 +100,6 @@ impl Mmap {
 
     #[inline(always)]
     fn as_static(&self) -> &'static [u8] {
-        // SAFETY: we leak the Mmap; lives for the program lifetime.
         unsafe { std::slice::from_raw_parts(self.ptr, self.len) }
     }
 }
@@ -105,8 +116,8 @@ impl Dataset {
         if &header.magic != MAGIC {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "bad magic"));
         }
-        if header.version != VERSION {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "bad version"));
+        if header.version != VERSION_V1 && header.version != VERSION_V2 {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "unsupported version"));
         }
         if header.dims as usize != DIMS {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "unexpected dims"));
@@ -126,12 +137,20 @@ impl Dataset {
             .and_then(|n| n.checked_mul(bytes_per_lane))
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "size overflow"))?;
         let label_bytes = (count + 7) / 8;
-        let needed = 32 + vectors_bytes + label_bytes;
+
+        let ivf_present = header.version >= VERSION_V2 && (header.flags & FLAG_IVF) != 0;
+        let nlist = header.nlist as usize;
+        let centroids_bytes = if ivf_present { nlist * stride * bytes_per_lane } else { 0 };
+        let offsets_bytes = if ivf_present { (nlist + 1) * 4 } else { 0 };
+
+        let needed = 32 + vectors_bytes + label_bytes + centroids_bytes + offsets_bytes;
         if bytes.len() < needed {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "truncated dataset"));
         }
 
-        let vectors_slice = &bytes[32..32 + vectors_bytes];
+        let mut cursor = 32;
+        let vectors_slice = &bytes[cursor..cursor + vectors_bytes];
+        cursor += vectors_bytes;
         let vectors = match header.dtype {
             DTYPE_F16 => {
                 let ptr = vectors_slice.as_ptr() as *const u16;
@@ -143,9 +162,51 @@ impl Dataset {
             }
             _ => unreachable!(),
         };
-        let labels: &'static [u8] = &bytes[32 + vectors_bytes..32 + vectors_bytes + label_bytes];
 
-        Ok(Self { header, vectors, labels })
+        let labels: &'static [u8] = &bytes[cursor..cursor + label_bytes];
+        cursor += label_bytes;
+
+        let ivf = if ivf_present {
+            let centroids_slice = &bytes[cursor..cursor + centroids_bytes];
+            cursor += centroids_bytes;
+            let offsets_slice = &bytes[cursor..cursor + offsets_bytes];
+            // cursor += offsets_bytes;
+
+            let mut centroids_f32 = vec![0f32; nlist * stride];
+            match header.dtype {
+                DTYPE_F16 => {
+                    let cs = unsafe {
+                        std::slice::from_raw_parts(
+                            centroids_slice.as_ptr() as *const u16,
+                            nlist * stride,
+                        )
+                    };
+                    for (dst, &src) in centroids_f32.iter_mut().zip(cs) {
+                        *dst = half::f16::from_bits(src).to_f32();
+                    }
+                }
+                DTYPE_F32 => {
+                    let cs = unsafe {
+                        std::slice::from_raw_parts(
+                            centroids_slice.as_ptr() as *const f32,
+                            nlist * stride,
+                        )
+                    };
+                    centroids_f32.copy_from_slice(cs);
+                }
+                _ => unreachable!(),
+            }
+
+            let offsets: &'static [u32] = unsafe {
+                std::slice::from_raw_parts(offsets_slice.as_ptr() as *const u32, nlist + 1)
+            };
+
+            Some(IvfIndex { nlist, centroids_f32, offsets })
+        } else {
+            None
+        };
+
+        Ok(Self { header, vectors, labels, ivf })
     }
 
     #[inline(always)]

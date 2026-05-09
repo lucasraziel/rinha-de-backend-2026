@@ -24,6 +24,7 @@ mod vectorize;
 use dataset::Dataset;
 
 static DATASET: OnceLock<&'static Dataset> = OnceLock::new();
+static NPROBE: OnceLock<usize> = OnceLock::new();
 
 const READY_BODY: &[u8] = b"";
 const BAD_REQUEST_BODY: &[u8] = br#"{"error":"bad_request"}"#;
@@ -48,7 +49,8 @@ async fn handle(req: Request<Incoming>) -> Result<Response<Full<Bytes>>, Infalli
                 Some(d) => *d,
                 None => return Ok(internal_error()),
             };
-            let frauds = knn::fraud_count_in_top_k(&q, dataset);
+            let nprobe = *NPROBE.get().unwrap_or(&16);
+            let frauds = knn::fraud_count_in_top_k(&q, dataset, nprobe);
             let body = responses::response(frauds);
             Ok(ok(body, true))
         }
@@ -91,14 +93,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let dataset_path: PathBuf = std::env::var("DATASET_PATH")
         .unwrap_or_else(|_| "/data/references.bin".to_string())
         .into();
+    let nprobe: usize = std::env::var("NPROBE").ok().and_then(|v| v.parse().ok()).unwrap_or(16);
+    let _ = NPROBE.set(nprobe);
 
     eprintln!("opening dataset at {}", dataset_path.display());
     let dataset = Dataset::open(&dataset_path)?;
     eprintln!(
-        "dataset: count={} stride={} dtype={}",
+        "dataset: count={} stride={} dtype={} version={} nlist={} flags={:#x} nprobe={}",
         dataset.count(),
         dataset.stride(),
-        dataset.header.dtype
+        dataset.header.dtype,
+        dataset.header.version,
+        dataset.header.nlist,
+        dataset.header.flags,
+        nprobe,
     );
     let warm = dataset.warm_up();
     eprintln!("warm-up checksum: {warm}");

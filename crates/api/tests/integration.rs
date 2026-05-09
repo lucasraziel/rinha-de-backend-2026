@@ -24,7 +24,8 @@ fn run_query(body: &[u8]) -> u8 {
     let q = vectorize::vectorize(&p).unwrap();
     let ds = dataset::Dataset::open(&dataset_path()).expect("open dataset");
     let _ = ds.warm_up();
-    knn::fraud_count_in_top_k(&q, &ds)
+    let nprobe = std::env::var("NPROBE").ok().and_then(|v| v.parse().ok()).unwrap_or(64);
+    knn::fraud_count_in_top_k(&q, &ds, nprobe)
 }
 
 #[test]
