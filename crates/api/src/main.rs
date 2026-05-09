@@ -1,6 +1,3 @@
-#[global_allocator]
-static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
-
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::path::PathBuf;

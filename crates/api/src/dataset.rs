@@ -94,7 +94,19 @@ impl Mmap {
         if ptr == libc::MAP_FAILED {
             return Err(io::Error::last_os_error());
         }
-        unsafe { libc::madvise(ptr, len, libc::MADV_WILLNEED); }
+        unsafe {
+            // Try MADV_POPULATE_READ (Linux 5.14+) first — synchronous
+            // page-in. Falls back to MADV_WILLNEED (async hint) if the
+            // kernel doesn't know the flag. Avoids page-fault latency
+            // on the first query against any cold page.
+            //
+            // libc::MADV_POPULATE_READ may not be exposed depending on the
+            // version we picked up; use the well-known constant directly.
+            const MADV_POPULATE_READ: i32 = 22;
+            if libc::madvise(ptr, len, MADV_POPULATE_READ) != 0 {
+                libc::madvise(ptr, len, libc::MADV_WILLNEED);
+            }
+        }
         Ok(Mmap { ptr: ptr as *const u8, len })
     }
 
@@ -225,18 +237,27 @@ impl Dataset {
         ((byte >> (idx & 7)) & 1) != 0
     }
 
-    /// Touch every page so subsequent queries don't pay page-fault latency.
+    /// Touch every 4 KB page so subsequent queries don't pay page-fault
+    /// latency. Belt-and-suspenders alongside MADV_POPULATE_READ in `Mmap::open`.
     pub fn warm_up(&self) -> u64 {
         let mut s: u64 = 0;
+        // 1 u16 = 2 bytes → 2048 u16/page → step 2048 touches one element per page.
         match &self.vectors {
             VectorStore::F16(v) => {
-                for &x in v.iter().step_by(1024) { s = s.wrapping_add(x as u64); }
+                for &x in v.iter().step_by(2048) { s = s.wrapping_add(x as u64); }
             }
             VectorStore::F32(v) => {
+                // 1 f32 = 4 bytes → 1024 f32/page.
                 for &x in v.iter().step_by(1024) { s = s.wrapping_add(x.to_bits() as u64); }
             }
         }
-        for &x in self.labels.iter().step_by(64) { s = s.wrapping_add(x as u64); }
+        // 1 u8 = 4096 u8/page.
+        for &x in self.labels.iter().step_by(4096) { s = s.wrapping_add(x as u64); }
+        // touch IVF data too
+        if let Some(ivf) = &self.ivf {
+            for &x in ivf.centroids_f32.iter().step_by(1024) { s = s.wrapping_add(x.to_bits() as u64); }
+            for &x in ivf.offsets.iter().step_by(1024) { s = s.wrapping_add(x as u64); }
+        }
         s
     }
 }
