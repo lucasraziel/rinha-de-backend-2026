@@ -1,14 +1,7 @@
 {
-  "nome": "Lucas Rego",
-  "social": [
-    "https://github.com/lucasraziel"
-  ],
-  "fonte": "https://github.com/lucasraziel/rinha-de-backend-2026",
-  "tecnologias": [
-    "Rust",
-    "Hyper",
-    "SIMD AVX2",
-    "KNN brute-force / IVF",
-    "Nginx"
-  ]
+    "participants": ["Lucas Rego"],
+    "social": ["https://github.com/lucasraziel"],
+    "source-code-repo": "https://github.com/lucasraziel/rinha-de-backend-2026",
+    "stack": ["rust", "hyper", "nginx", "ivf-knn", "simd-avx2-f16c"],
+    "open_to_work": false
 }

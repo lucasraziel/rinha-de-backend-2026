@@ -1,0 +1,49 @@
+name: release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  publish:
+    name: build & push lucasraziel/rinha2026-api
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: fetch references.json.gz
+        run: ./scripts/fetch-resources.sh
+
+      - name: generate references.bin (f16 + IVF)
+        run: cargo run --release -p prep
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: docker login
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: build & push
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            lucasraziel/rinha2026-api:${{ github.sha }}
+            lucasraziel/rinha2026-api:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: print pinned image
+        run: |
+          echo "::notice title=Submission image::lucasraziel/rinha2026-api:${{ github.sha }}"
+          echo "Pin in submission branch's docker-compose.yml:"
+          echo "  image: lucasraziel/rinha2026-api:${{ github.sha }}"
